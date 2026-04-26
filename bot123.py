@@ -20,7 +20,7 @@ from telegram.ext import (
     ContextTypes,
 )
 
-BOT_TOKEN = os.getenv"BOT_TOKEN"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMINS = [5304912608]
 
 NUMBER_PRICE = 10

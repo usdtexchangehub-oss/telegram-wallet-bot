@@ -1,4 +1,4 @@
-import os 
+import os
 import sqlite3
 import random
 import csv
@@ -23,12 +23,19 @@ from telegram.ext import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMINS = [5304912608]
 
-NUMBER_PRICE = 10
-LOW_STOCK_LIMIT = 5
-
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = conn.cursor()
 
+
+def now():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def is_admin(user_id):
+    return user_id in ADMINS
+
+
+# SAFE TABLES - do not delete old data
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
@@ -65,15 +72,8 @@ CREATE TABLE IF NOT EXISTS payments (
 """)
 
 cursor.execute("""
-CREATE TABLE IF NOT EXISTS number_stock (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    number TEXT
-)
-""")
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS tickets (
-    ticket_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS messages (
+    msg_id TEXT PRIMARY KEY,
     user_id INTEGER,
     msg TEXT,
     status TEXT,
@@ -97,18 +97,9 @@ conn.commit()
 
 menu = [
     ["💰 Add Balance", "🛒 Buy Service"],
-    ["📱 Get Number", "👛 Wallet"],
-    ["📦 My Orders", "💳 Payments"],
-    ["🎫 Support"],
+    ["👛 Wallet", "📦 My Orders"],
+    ["💳 Payments", "📩 Message Admin"],
 ]
-
-
-def now():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def is_admin(user_id):
-    return user_id in ADMINS
 
 
 def ensure_user(user_id):
@@ -162,9 +153,7 @@ async def add_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    services = cursor.execute(
-        "SELECT name, price FROM services"
-    ).fetchall()
+    services = cursor.execute("SELECT name, price FROM services").fetchall()
 
     buttons = [
         [InlineKeyboardButton(f"{name} - ₹{price}", callback_data=f"buy_{name}")]
@@ -174,54 +163,6 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🛒 Select service:",
         reply_markup=InlineKeyboardMarkup(buttons)
-    )
-
-
-async def get_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    balance = get_balance(user_id)
-
-    if balance < NUMBER_PRICE:
-        await update.message.reply_text(
-            f"❌ Low balance.\nNumber price: ₹{NUMBER_PRICE}"
-        )
-        return
-
-    item = cursor.execute(
-        "SELECT id, number FROM number_stock ORDER BY id ASC LIMIT 1"
-    ).fetchone()
-
-    if not item:
-        await update.message.reply_text("❌ Number stock empty. Contact admin.")
-        return
-
-    number_id, number = item
-
-    cursor.execute(
-        "UPDATE users SET balance=balance-? WHERE user_id=?",
-        (NUMBER_PRICE, user_id)
-    )
-    cursor.execute(
-        "DELETE FROM number_stock WHERE id=?",
-        (number_id,)
-    )
-    conn.commit()
-
-    stock = cursor.execute(
-        "SELECT COUNT(*) FROM number_stock"
-    ).fetchone()[0]
-
-    if stock < LOW_STOCK_LIMIT:
-        for admin_id in ADMINS:
-            await context.bot.send_message(
-                admin_id,
-                f"⚠️ Low stock alert: only {stock} numbers left."
-            )
-
-    await update.message.reply_text(
-        f"✅ ₹{NUMBER_PRICE} deducted.\n\n"
-        f"📱 Your number:\n{number}\n\n"
-        f"Now click 🛒 Buy Service."
     )
 
 
@@ -290,10 +231,9 @@ async def payment_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 
-async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["state"] = "support"
-
-    await update.message.reply_text("🎫 Send your support message now.")
+async def message_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["state"] = "user_message_admin"
+    await update.message.reply_text("📩 Type your message for admin.")
 
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -301,34 +241,23 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keyboard = [
-        [
-            InlineKeyboardButton("➕ Add Number", callback_data="admin_add_number"),
-            InlineKeyboardButton("📦 View Stock", callback_data="admin_stock"),
-        ],
-        [
-            InlineKeyboardButton("💳 View Payments", callback_data="admin_payments"),
-            InlineKeyboardButton("👤 View Users", callback_data="admin_users"),
-        ],
-        [
-            InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"),
-        ],
+        [InlineKeyboardButton("➕ Add Balance", callback_data="admin_add_balance")],
+        [InlineKeyboardButton("👥 Users + Balances", callback_data="admin_users_balances")],
+        [InlineKeyboardButton("📦 All Orders", callback_data="admin_all_orders")],
+        [InlineKeyboardButton("💸 Refund Order", callback_data="admin_refund_order")],
+        [InlineKeyboardButton("💳 Payments", callback_data="admin_payments")],
+        [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast")],
         [
             InlineKeyboardButton("➕ Add Service", callback_data="admin_add_service"),
             InlineKeyboardButton("❌ Remove Service", callback_data="admin_remove_service"),
         ],
-        [
-            InlineKeyboardButton("💰 Change Price", callback_data="admin_change_price"),
-        ],
-        [
-            InlineKeyboardButton("🔍 Search Order", callback_data="admin_search_order"),
-        ],
+        [InlineKeyboardButton("💰 Change Price", callback_data="admin_change_price")],
+        [InlineKeyboardButton("🔍 Search Order", callback_data="admin_search_order")],
         [
             InlineKeyboardButton("📤 Export Orders", callback_data="admin_export_orders"),
             InlineKeyboardButton("📤 Export Payments", callback_data="admin_export_payments"),
         ],
-        [
-            InlineKeyboardButton("📊 Daily Report", callback_data="admin_daily_report"),
-        ],
+        [InlineKeyboardButton("📊 Daily Report", callback_data="admin_daily_report")],
     ]
 
     await update.message.reply_text(
@@ -351,14 +280,12 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             f"💳 You selected ₹{amount}\n\n"
-            f"1. Pay this exact amount using QR\n"
-            f"2. Send only UTR number"
+            f"Pay this exact amount and send only UTR."
         )
         return
 
     if data.startswith("buy_"):
         service = data.replace("buy_", "")
-
         row = cursor.execute(
             "SELECT price FROM services WHERE name=?",
             (service,)
@@ -381,10 +308,12 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "UPDATE users SET balance=balance-? WHERE user_id=?",
             (price, user_id)
         )
+
         cursor.execute(
             "INSERT INTO orders VALUES (?, ?, ?, ?, ?, ?)",
             (order_id, user_id, service, price, "pending", now())
         )
+
         conn.commit()
 
         await query.edit_message_text(
@@ -442,41 +371,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    if data.startswith("requestsend_"):
-        _, target_user_id, order_id = data.split("_")
-
-        for admin_id in ADMINS:
-            await context.bot.send_message(
-                admin_id,
-                f"📩 Message Requested\n"
-                f"User: {target_user_id}\n"
-                f"Order ID: {order_id}",
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            "✍️ Send Message",
-                            callback_data=f"sendmsgadmin_{target_user_id}_{order_id}"
-                        )
-                    ]
-                ])
-            )
-
-        await query.message.reply_text("⏳ Message requested. Please wait.")
-        return
-
-    if data.startswith("sendmsgadmin_"):
-        if not is_admin(user_id):
-            return
-
-        _, target_user_id, order_id = data.split("_")
-
-        context.user_data["state"] = "admin_send_msg"
-        context.user_data["send_to_user"] = int(target_user_id)
-        context.user_data["send_order_id"] = order_id
-
-        await query.message.reply_text("✍️ Type message now:")
-        return
-
     if data.startswith("ap_"):
         if not is_admin(user_id):
             return
@@ -487,10 +381,12 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "UPDATE users SET balance=balance+? WHERE user_id=?",
             (int(amount), int(target_user_id))
         )
+
         cursor.execute(
             "UPDATE payments SET status='approved' WHERE utr=?",
             (utr,)
         )
+
         conn.commit()
 
         await context.bot.send_message(
@@ -516,6 +412,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "UPDATE payments SET status='rejected' WHERE utr=?",
             (utr,)
         )
+
         conn.commit()
 
         await context.bot.send_message(
@@ -541,6 +438,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "UPDATE orders SET status='completed' WHERE order_id=?",
             (order_id,)
         )
+
         conn.commit()
 
         await context.bot.send_message(
@@ -563,10 +461,12 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "UPDATE orders SET status='cancelled_refunded' WHERE order_id=?",
             (order_id,)
         )
+
         cursor.execute(
             "UPDATE users SET balance=balance+? WHERE user_id=?",
             (int(price), int(target_user_id))
         )
+
         conn.commit()
 
         await context.bot.send_message(
@@ -584,32 +484,64 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(user_id):
         return
 
-    if data == "admin_add_number":
-        context.user_data["state"] = "admin_add_number"
-        await query.message.reply_text("📱 Send the number to add.")
+    if data == "admin_add_balance":
+        context.user_data["state"] = "admin_add_balance"
+
+        await query.message.reply_text(
+            "Send like:\n"
+            "UserID | Amount\n\n"
+            "Example:\n"
+            "123456789 | 50"
+        )
         return
 
-    if data == "admin_stock":
-        stock = cursor.execute(
-            "SELECT COUNT(*) FROM number_stock"
-        ).fetchone()[0]
+    if data == "admin_users_balances":
+        rows = cursor.execute(
+            "SELECT user_id, balance FROM users ORDER BY user_id DESC LIMIT 50"
+        ).fetchall()
 
-        await query.message.reply_text(f"📦 Number Stock: {stock}")
+        msg = "👥 Users + Balances:\n\n"
+
+        for uid, balance in rows:
+            msg += f"User: {uid} | Balance: ₹{balance}\n"
+
+        await query.message.reply_text(msg or "No users.")
+        return
+
+    if data == "admin_all_orders":
+        rows = cursor.execute(
+            """
+            SELECT order_id, user_id, service, price, status
+            FROM orders
+            ORDER BY created_at DESC
+            LIMIT 30
+            """
+        ).fetchall()
+
+        msg = "📦 Recent Orders:\n\n"
+
+        for order_id, uid, service, price, status in rows:
+            msg += (
+                f"{order_id} | User: {uid} | "
+                f"{service} | ₹{price} | {status}\n"
+            )
+
+        await query.message.reply_text(msg or "No orders.")
+        return
+
+    if data == "admin_refund_order":
+        context.user_data["state"] = "admin_refund_order"
+        await query.message.reply_text("Send Order ID to refund:")
         return
 
     if data == "admin_payments":
-        total = cursor.execute(
-            "SELECT COUNT(*) FROM payments"
-        ).fetchone()[0]
-
+        total = cursor.execute("SELECT COUNT(*) FROM payments").fetchone()[0]
         pending = cursor.execute(
             "SELECT COUNT(*) FROM payments WHERE status='pending'"
         ).fetchone()[0]
-
         approved = cursor.execute(
             "SELECT COUNT(*) FROM payments WHERE status='approved'"
         ).fetchone()[0]
-
         rejected = cursor.execute(
             "SELECT COUNT(*) FROM payments WHERE status='rejected'"
         ).fetchone()[0]
@@ -623,14 +555,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    if data == "admin_users":
-        users = cursor.execute(
-            "SELECT COUNT(*) FROM users"
-        ).fetchone()[0]
-
-        await query.message.reply_text(f"👤 Total Users: {users}")
-        return
-
     if data == "admin_broadcast":
         context.user_data["state"] = "admin_broadcast"
         await query.message.reply_text("📢 Send broadcast message.")
@@ -638,6 +562,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "admin_add_service":
         context.user_data["state"] = "admin_add_service"
+
         await query.message.reply_text(
             "Send service like:\n"
             "Service Name | Price\n\n"
@@ -653,6 +578,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "admin_change_price":
         context.user_data["state"] = "admin_change_price"
+
         await query.message.reply_text(
             "Send like:\n"
             "Service Name | New Price\n\n"
@@ -671,7 +597,14 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         with open("orders.csv", "w", newline="", encoding="utf-8") as file:
             writer = csv.writer(file)
-            writer.writerow(["order_id", "user_id", "service", "price", "status", "created_at"])
+            writer.writerow([
+                "order_id",
+                "user_id",
+                "service",
+                "price",
+                "status",
+                "created_at",
+            ])
             writer.writerows(rows)
 
         await query.message.reply_document(open("orders.csv", "rb"))
@@ -682,7 +615,13 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         with open("payments.csv", "w", newline="", encoding="utf-8") as file:
             writer = csv.writer(file)
-            writer.writerow(["utr", "user_id", "amount", "status", "created_at"])
+            writer.writerow([
+                "utr",
+                "user_id",
+                "amount",
+                "status",
+                "created_at",
+            ])
             writer.writerows(rows)
 
         await query.message.reply_document(open("payments.csv", "rb"))
@@ -735,57 +674,30 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     state = context.user_data.get("state")
 
-    if state == "support":
-        ticket_id = "TCK" + str(random.randint(100000, 999999))
+    if state == "user_message_admin":
+        msg_id = "MSG" + str(random.randint(100000, 999999))
 
         cursor.execute(
-            "INSERT INTO tickets VALUES (?, ?, ?, ?, ?)",
-            (ticket_id, user_id, text, "open", now())
+            "INSERT INTO messages VALUES (?, ?, ?, ?, ?)",
+            (msg_id, user_id, text, "open", now())
         )
         conn.commit()
 
         for admin_id in ADMINS:
             await context.bot.send_message(
                 admin_id,
-                f"🎫 New Ticket\n"
-                f"Ticket: {ticket_id}\n"
+                f"📩 Message from user\n"
+                f"Message ID: {msg_id}\n"
                 f"User: {user_id}\n\n{text}"
             )
 
-        await update.message.reply_text(
-            f"✅ Support ticket sent.\nTicket ID: {ticket_id}"
-        )
-
+        await update.message.reply_text("✅ Message sent to admin.")
         context.user_data.pop("state", None)
         return
 
     if is_admin(user_id):
+
         if state == "send_order_message":
-            target_user_id = context.user_data["send_to_user"]
-            order_id = context.user_data["send_order_id"]
-
-            keyboard = [[
-                InlineKeyboardButton(
-                    "📩 Send",
-                    callback_data=f"requestsend_{target_user_id}_{order_id}"
-                )
-            ]]
-
-            await context.bot.send_message(
-                target_user_id,
-                f"📩 Message from Admin\n"
-                f"🧾 Order ID: {order_id}\n\n{text}",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-
-            await update.message.reply_text("✅ Message sent to user.")
-
-            context.user_data.pop("state", None)
-            context.user_data.pop("send_to_user", None)
-            context.user_data.pop("send_order_id", None)
-            return
-
-        if state == "admin_send_msg":
             target_user_id = context.user_data["send_to_user"]
             order_id = context.user_data["send_order_id"]
 
@@ -802,203 +714,19 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("send_order_id", None)
             return
 
-        if state == "admin_add_number":
-            cursor.execute(
-                "INSERT INTO number_stock (number) VALUES (?)",
-                (text,)
-            )
-            conn.commit()
-
-            await update.message.reply_text("✅ Number added.")
-            context.user_data.pop("state", None)
-            return
-
-        if state == "admin_broadcast":
-            users = cursor.execute(
-                "SELECT user_id FROM users"
-            ).fetchall()
-
-            sent = 0
-
-            for user in users:
-                try:
-                    await context.bot.send_message(user[0], text)
-                    sent += 1
-                except Exception:
-                    pass
-
-            await update.message.reply_text(
-                f"📢 Broadcast sent to {sent} users."
-            )
-
-            context.user_data.pop("state", None)
-            return
-
-        if state == "admin_add_service":
+        if state == "admin_add_balance":
             try:
-                name, price = text.split("|")
-                name = name.strip()
-                price = int(price.strip())
+                target_user_id, amount = text.split("|")
+                target_user_id = int(target_user_id.strip())
+                amount = int(amount.strip())
+
+                ensure_user(target_user_id)
 
                 cursor.execute(
-                    "INSERT OR REPLACE INTO services VALUES (?, ?)",
-                    (name, price)
+                    "UPDATE users SET balance=balance+? WHERE user_id=?",
+                    (amount, target_user_id)
                 )
+
                 conn.commit()
 
-                await update.message.reply_text(
-                    f"✅ Service added/updated:\n{name} - ₹{price}"
-                )
-
-            except Exception:
-                await update.message.reply_text(
-                    "❌ Format wrong. Use:\nService Name | Price"
-                )
-
-            context.user_data.pop("state", None)
-            return
-
-        if state == "admin_remove_service":
-            cursor.execute(
-                "DELETE FROM services WHERE name=?",
-                (text,)
-            )
-            conn.commit()
-
-            await update.message.reply_text(
-                f"❌ Service removed: {text}"
-            )
-
-            context.user_data.pop("state", None)
-            return
-
-        if state == "admin_change_price":
-            try:
-                name, price = text.split("|")
-                name = name.strip()
-                price = int(price.strip())
-
-                cursor.execute(
-                    "UPDATE services SET price=? WHERE name=?",
-                    (price, name)
-                )
-                conn.commit()
-
-                await update.message.reply_text(
-                    f"💰 Price updated:\n{name} - ₹{price}"
-                )
-
-            except Exception:
-                await update.message.reply_text(
-                    "❌ Format wrong. Use:\nService Name | New Price"
-                )
-
-            context.user_data.pop("state", None)
-            return
-
-        if state == "admin_search_order":
-            order = cursor.execute(
-                "SELECT * FROM orders WHERE order_id=?",
-                (text,)
-            ).fetchone()
-
-            if order:
-                await update.message.reply_text(
-                    f"🔍 Order Found\n"
-                    f"Order ID: {order[0]}\n"
-                    f"User: {order[1]}\n"
-                    f"Service: {order[2]}\n"
-                    f"Price: ₹{order[3]}\n"
-                    f"Status: {order[4]}\n"
-                    f"Date: {order[5]}"
-                )
-            else:
-                await update.message.reply_text("❌ Order not found.")
-
-            context.user_data.pop("state", None)
-            return
-
-    expected_amount = context.user_data.get("expected_amount")
-
-    if expected_amount:
-        utr = text
-
-        if cursor.execute(
-            "SELECT utr FROM payments WHERE utr=?",
-            (utr,)
-        ).fetchone():
-            await update.message.reply_text(
-                "❌ This UTR is already submitted."
-            )
-            return
-
-        cursor.execute(
-            "INSERT INTO payments VALUES (?, ?, ?, ?, ?)",
-            (utr, user_id, expected_amount, "pending", now())
-        )
-        conn.commit()
-
-        keyboard = [[
-            InlineKeyboardButton(
-                "✅ Approve",
-                callback_data=f"ap_{user_id}_{expected_amount}_{utr}"
-            ),
-            InlineKeyboardButton(
-                "❌ Reject",
-                callback_data=f"rej_{user_id}_{expected_amount}_{utr}"
-            )
-        ]]
-
-        for admin_id in ADMINS:
-            await context.bot.send_message(
-                admin_id,
-                f"💳 Payment Request\n"
-                f"User: {user_id}\n"
-                f"Amount: ₹{expected_amount}\n"
-                f"UTR: {utr}",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-
-        await update.message.reply_text(
-            "⏳ Payment submitted. Waiting for approval."
-        )
-
-        context.user_data.pop("expected_amount", None)
-        return
-
-
-async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    ensure_user(user_id)
-
-    for admin_id in ADMINS:
-        await context.bot.send_photo(
-            admin_id,
-            update.message.photo[-1].file_id,
-            caption=f"🧾 Payment screenshot from user {user_id}"
-        )
-
-    await update.message.reply_text(
-        "✅ Screenshot sent to admin. Now send UTR."
-    )
-
-
-app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("admin", admin))
-
-app.add_handler(MessageHandler(filters.Regex("^💰 Add Balance$|^Add Balance$"), add_balance))
-app.add_handler(MessageHandler(filters.Regex("^🛒 Buy Service$|^Buy Service$"), buy))
-app.add_handler(MessageHandler(filters.Regex("^📱 Get Number$|^Get Number$"), get_number))
-app.add_handler(MessageHandler(filters.Regex("^👛 Wallet$|^Wallet$"), wallet))
-app.add_handler(MessageHandler(filters.Regex("^📦 My Orders$|^My Orders$"), my_orders))
-app.add_handler(MessageHandler(filters.Regex("^💳 Payments$|^Payments$"), payment_history))
-app.add_handler(MessageHandler(filters.Regex("^🎫 Support$|^Support$"), support))
-
-app.add_handler(CallbackQueryHandler(buttons))
-app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-
-print("Bot running...")
-app.run_polling()
+                await context.bot.se
